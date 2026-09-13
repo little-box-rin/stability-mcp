@@ -52,13 +52,15 @@ func (e *Engine) GenerateBatch(ctx context.Context, prompts []string, params cli
 			} else {
 				seed = seed + i
 			}
+			// Copy prompt and seed into params for each job
+			params.Prompt = prompt
+			params.Seed = seed
 			job := Job{
 				Index:  i,
 				Prompt: prompt,
 				Seed:   seed,
 				Params: params,
 			}
-			job.Params.Seed = seed
 
 			select {
 			case jobs <- job:
@@ -105,10 +107,10 @@ func (e *Engine) GenerateBatch(ctx context.Context, prompts []string, params cli
 				// Make the API call
 				data, genResult, err := e.client.Generate(job.Params)
 				res := Result{
-					Index:  job.Index,
-					Seed:   job.Seed,
-					Data:   data,
-					Err:    err,
+					Index: job.Index,
+					Seed:  job.Seed,
+					Data:  data,
+					Err:   err,
 				}
 				if genResult != nil {
 					res.Seed = genResult.Seed
