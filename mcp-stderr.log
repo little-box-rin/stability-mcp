@@ -1,1 +1,0 @@
-time=2026-09-13T20:55:21.322+02:00 level=INFO msg="Starting stability-mcp" version=0.4.0 output_dir=/tmp/stability-images concurrency=10 rate_limit=150 max_retries=3
