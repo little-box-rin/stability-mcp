@@ -44,7 +44,7 @@ func main() {
 
 	cli := client.NewClient(cfg.APIKey)
 
-	mcpServer := server.NewMCPServer("stability-mcp", "0.2.0")
+	mcpServer := server.NewMCPServer("stability-mcp", "0.3.0")
 
 	if err := tools.RegisterAll(mcpServer, cfg, cli); err != nil {
 		log.Fatalf("Failed to register tools: %v", err)

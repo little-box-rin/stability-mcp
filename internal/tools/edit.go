@@ -21,6 +21,8 @@ func RegisterEditTools(s *server.MCPServer, cfg *config.Config, cli *client.Clie
 	registerInpaint(s, cli, ow)
 	registerOutpaint(s, cli, ow)
 	registerSearchAndReplace(s, cli, ow)
+	registerUpscaleFast(s, cli, ow)
+	registerUpscaleCreative(s, cli, ow)
 }
 
 // commonEditParams defines parameters shared across most edit tools.
@@ -134,7 +136,7 @@ func registerControlSketch(s *server.MCPServer, cli *client.Client, ow *output.W
 			mcp.Description("Seed for reproducibility (0 = random)"),
 		),
 		mcp.WithString("style_preset",
-			mcp.Description("Style preset (line-art, anime, cinematic, etc.)"),
+			mcp.Description(stylePresetDescription()),
 		),
 		mcp.WithString("output_format",
 			mcp.Description("Output format: png or webp"),
@@ -194,7 +196,7 @@ func registerControlStruct(s *server.MCPServer, cli *client.Client, ow *output.W
 			mcp.Description("Seed for reproducibility (0 = random)"),
 		),
 		mcp.WithString("style_preset",
-			mcp.Description("Style preset (line-art, anime, cinematic, etc.)"),
+			mcp.Description(stylePresetDescription()),
 		),
 		mcp.WithString("output_format",
 			mcp.Description("Output format: png or webp"),
@@ -252,7 +254,7 @@ func registerControlStyle(s *server.MCPServer, cli *client.Client, ow *output.Wr
 			mcp.Description("Seed for reproducibility (0 = random)"),
 		),
 		mcp.WithString("style_preset",
-			mcp.Description("Style preset (line-art, anime, cinematic, etc.)"),
+			mcp.Description(stylePresetDescription()),
 		),
 		mcp.WithString("output_format",
 			mcp.Description("Output format: png or webp"),
@@ -344,7 +346,7 @@ func registerInpaint(s *server.MCPServer, cli *client.Client, ow *output.Writer)
 			mcp.Description("Seed for reproducibility (0 = random)"),
 		),
 		mcp.WithString("style_preset",
-			mcp.Description("Style preset (line-art, anime, cinematic, etc.)"),
+			mcp.Description(stylePresetDescription()),
 		),
 		mcp.WithString("output_format",
 			mcp.Description("Output format: png or webp"),
@@ -541,4 +543,117 @@ func extFromMIME(mimeType string) string {
 	default:
 		return "png"
 	}
+}
+
+// registerUpscaleFast registers the upscale_fast tool — fast 2x or 4x upscaling.
+func registerUpscaleFast(s *server.MCPServer, cli *client.Client, ow *output.Writer) {
+	tool := mcp.NewTool("upscale_fast",
+		mcp.WithDescription("Upscale an image 2x or 4x using Stability AI Fast Upscaler"),
+		mcp.WithString("image",
+			mcp.Required(),
+			mcp.Description("Image file path or data URI (data:image/png;base64,...) to upscale"),
+		),
+		mcp.WithString("mode",
+			mcp.Required(),
+			mcp.Description("Upscale factor: upscale_2x or upscale_4x"),
+		),
+		mcp.WithString("output_format",
+			mcp.Description("Output format: png, webp, or jpeg (default png)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		imageStr := mcp.ParseString(request, "image", "")
+		mode := mcp.ParseString(request, "mode", "")
+		outputFormat := mcp.ParseString(request, "output_format", "png")
+
+		imgBytes, mimeType, err := client.LoadImage(imageStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Loading image: %v", err)), nil
+		}
+
+		params := client.GenerateEditParams{
+			Model:  "upscale/fast",
+			Prompt: "",
+			Files: []client.EditFile{
+				{FieldName: "image", Filename: "upscale." + extFromMIME(mimeType), Data: imgBytes},
+			},
+			TextFields: map[string]string{
+				"mode":          mode,
+				"output_format": outputFormat,
+			},
+		}
+
+		return runEditTool(ctx, cli, ow, "upscale/fast", params)
+	})
+}
+
+// registerUpscaleCreative registers the upscale_creative tool — creative upscaling with detail prompts.
+func registerUpscaleCreative(s *server.MCPServer, cli *client.Client, ow *output.Writer) {
+	tool := mcp.NewTool("upscale_creative",
+		mcp.WithDescription("Upscale an image with creative detail using Stability AI Creative Upscaler"),
+		mcp.WithString("image",
+			mcp.Required(),
+			mcp.Description("Image file path or data URI (data:image/png;base64,...) to upscale"),
+		),
+		mcp.WithString("prompt",
+			mcp.Required(),
+			mcp.Description("Creative prompt describing the detail to add during upscaling"),
+		),
+		mcp.WithString("negative_prompt",
+			mcp.Description("What to avoid in the upscaled image"),
+		),
+		mcp.WithNumber("creativity",
+			mcp.Description("Creativity strength (0-1, default 0.35)"),
+		),
+		mcp.WithString("style_preset",
+			mcp.Description(stylePresetDescription()),
+		),
+		mcp.WithInteger("seed",
+			mcp.Description("Seed for reproducibility (0 = random)"),
+		),
+		mcp.WithString("output_format",
+			mcp.Description("Output format: png, webp, or jpeg (default png)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		imageStr := mcp.ParseString(request, "image", "")
+		prompt := mcp.ParseString(request, "prompt", "")
+		negativePrompt := mcp.ParseString(request, "negative_prompt", "")
+		creativity := mcp.ParseFloat64(request, "creativity", 0.35)
+		stylePreset := mcp.ParseString(request, "style_preset", "")
+		seed := mcp.ParseInt(request, "seed", 0)
+		outputFormat := mcp.ParseString(request, "output_format", "png")
+
+		imgBytes, mimeType, err := client.LoadImage(imageStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Loading image: %v", err)), nil
+		}
+
+		textFields := map[string]string{
+			"creativity":    fmt.Sprintf("%.2f", creativity),
+			"output_format": outputFormat,
+		}
+		if negativePrompt != "" {
+			textFields["negative_prompt"] = negativePrompt
+		}
+		if stylePreset != "" {
+			textFields["style_preset"] = stylePreset
+		}
+		if seed > 0 {
+			textFields["seed"] = fmt.Sprintf("%d", seed)
+		}
+
+		params := client.GenerateEditParams{
+			Model:  "upscale/creative",
+			Prompt: prompt,
+			Files: []client.EditFile{
+				{FieldName: "image", Filename: "upscale." + extFromMIME(mimeType), Data: imgBytes},
+			},
+			TextFields: textFields,
+		}
+
+		return runEditTool(ctx, cli, ow, "upscale/creative", params)
+	})
 }

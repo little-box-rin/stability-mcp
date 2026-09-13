@@ -24,6 +24,9 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 			mcp.Required(),
 			mcp.Description("Text prompt describing the image"),
 		),
+		mcp.WithString("image",
+			mcp.Description("Optional source image file path or data URI for image-to-image generation; when provided the image guides generation (img2img)"),
+		),
 		mcp.WithString("negative_prompt",
 			mcp.Description("What to avoid in the generated image"),
 		),
@@ -40,7 +43,7 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 			mcp.Description("Seed for reproducibility (0 = random)"),
 		),
 		mcp.WithString("style_preset",
-			mcp.Description("Style preset (line-art, anime, cinematic, etc.)"),
+			mcp.Description(stylePresetDescription()),
 		),
 		mcp.WithString("output_format",
 			mcp.Description("Output format: png or webp"),
@@ -54,7 +57,36 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 		params := parseGenerateParams(request)
 		params.Prompt = mcp.ParseString(request, "prompt", "")
 
-		data, genResult, err := cli.Generate(params)
+		var (
+			data      []byte
+			genResult *client.GenerateResult
+			err       error
+			img2img   bool
+		)
+
+		imageStr := mcp.ParseString(request, "image", "")
+		if imageStr != "" {
+			// Image-to-image: send the source image as a multipart field on the
+			// same generate/{model} endpoint, with all text params alongside.
+			img2img = true
+			imgBytes, mimeType, loadErr := client.LoadImage(imageStr)
+			if loadErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Loading image: %v", loadErr)), nil
+			}
+
+			editParams := client.GenerateEditParams{
+				Model:  "generate/" + params.Model,
+				Prompt: params.Prompt,
+				Files: []client.EditFile{
+					{FieldName: "image", Filename: "source." + extFromMIME(mimeType), Data: imgBytes},
+				},
+				TextFields: generateTextFields(params),
+			}
+
+			data, genResult, err = cli.GenerateEdit(editParams)
+		} else {
+			data, genResult, err = cli.Generate(params)
+		}
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Generation failed: %v", err)), nil
 		}
@@ -75,6 +107,7 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 			"seed":          seed,
 			"finish_reason": genResult.FinishReason,
 			"model":         params.Model,
+			"image_to_image": img2img,
 		}
 		if params.Model == "" {
 			result["model"] = "core"
@@ -107,7 +140,7 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 			mcp.Description("Base seed; incremented per prompt (0 = random per image)"),
 		),
 		mcp.WithString("style_preset",
-			mcp.Description("Style preset (line-art, anime, cinematic, etc.)"),
+			mcp.Description(stylePresetDescription()),
 		),
 		mcp.WithString("output_format",
 			mcp.Description("Output format: png or webp"),
@@ -274,6 +307,34 @@ func parseGenerateParams(request mcp.CallToolRequest) client.GenerateParams {
 		OutputFormat:   mcp.ParseString(request, "output_format", "png"),
 		Model:          mcp.ParseString(request, "model", "core"),
 	}
+}
+
+// generateTextFields converts GenerateParams into text form fields to send
+// alongside an input image for image-to-image generation via GenerateEdit.
+func generateTextFields(params client.GenerateParams) map[string]string {
+	fields := make(map[string]string)
+	if params.NegativePrompt != "" {
+		fields["negative_prompt"] = params.NegativePrompt
+	}
+	aspectRatio := params.AspectRatio
+	if aspectRatio == "" {
+		aspectRatio = "1:1"
+	}
+	fields["aspect_ratio"] = aspectRatio
+	fields["cfg_scale"] = fmt.Sprintf("%g", params.CfgScale)
+	fields["steps"] = fmt.Sprintf("%d", params.Steps)
+	if params.Seed > 0 {
+		fields["seed"] = fmt.Sprintf("%d", params.Seed)
+	}
+	if params.StylePreset != "" {
+		fields["style_preset"] = params.StylePreset
+	}
+	outputFormat := params.OutputFormat
+	if outputFormat == "" {
+		outputFormat = "png"
+	}
+	fields["output_format"] = outputFormat
+	return fields
 }
 
 // Ensure json and encoding/json are used.
