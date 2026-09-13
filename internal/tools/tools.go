@@ -18,8 +18,6 @@ import (
 // RegisterAll registers all MCP tools on the server.
 func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) error {
 	ow := output.NewWriter(cfg.OutputDir)
-
-	// generate_image — single text-to-image generation
 	generateImageTool := mcp.NewTool("generate_image",
 		mcp.WithDescription("Generate a single image from a text prompt using Stability AI"),
 		mcp.WithString("prompt",
@@ -256,6 +254,10 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 
 		return mcp.NewToolResultJSON(response)
 	})
+
+	// Register image editing tools (control sketch, control struct, control style,
+	// erase, inpaint, outpaint, search_and_replace)
+	RegisterEditTools(s, cfg, cli, ow)
 
 	return nil
 }

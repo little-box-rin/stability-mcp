@@ -23,6 +23,21 @@ type GenerateParams struct {
 	Model          string // core / ultra / sd35
 }
 
+// GenerateEditParams holds parameters that include file uploads (images, masks).
+type GenerateEditParams struct {
+	Model      string    // endpoint name: control/sketch, control/struct, inpaint, etc.
+	Prompt     string    // optional for some endpoints
+	Files      []EditFile // image files to upload
+	TextFields map[string]string // additional text form fields
+}
+
+// EditFile represents a file to upload in a multipart edit request.
+type EditFile struct {
+	FieldName string // multipart field name (image, mask, style, etc.)
+	Filename  string // displayed filename
+	Data      []byte
+}
+
 // GenerateResult contains metadata returned from a generation request.
 type GenerateResult struct {
 	Seed         int
@@ -101,6 +116,86 @@ func (c *Client) Generate(params GenerateParams) ([]byte, *GenerateResult, error
 		outputFormat = "png"
 	}
 	_ = w.WriteField("output_format", outputFormat)
+
+	if err := w.Close(); err != nil {
+		return nil, nil, fmt.Errorf("closing multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, &buf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "image/*")
+	req.Header.Set("User-Agent", "stability-mcp/1.0")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	result := &GenerateResult{}
+
+	if seedStr := resp.Header.Get("seed"); seedStr != "" {
+		if seed, err := strconv.Atoi(seedStr); err == nil {
+			result.Seed = seed
+		}
+	}
+	if finish := resp.Header.Get("finish-reason"); finish != "" {
+		result.FinishReason = finish
+	}
+
+	return body, result, nil
+}
+
+// GenerateEdit sends an image editing request with file uploads via multipart POST.
+// It creates a multipart POST to {baseURL}/v2beta/stable-image/{model} with file fields
+// and text fields. Parses the response the same way as Generate().
+func (c *Client) GenerateEdit(params GenerateEditParams) ([]byte, *GenerateResult, error) {
+	model := params.Model
+	if model == "" {
+		return nil, nil, fmt.Errorf("model is required for edit requests")
+	}
+
+	url := fmt.Sprintf("%s/v2beta/stable-image/%s", c.baseURL, model)
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	// Write file fields
+	for _, f := range params.Files {
+		part, err := w.CreateFormFile(f.FieldName, f.Filename)
+		if err != nil {
+			return nil, nil, fmt.Errorf("creating form file %s: %w", f.FieldName, err)
+		}
+		if _, err := part.Write(f.Data); err != nil {
+			return nil, nil, fmt.Errorf("writing file %s: %w", f.FieldName, err)
+		}
+	}
+
+	// Write text fields
+	if params.Prompt != "" {
+		if err := w.WriteField("prompt", params.Prompt); err != nil {
+			return nil, nil, fmt.Errorf("writing prompt field: %w", err)
+		}
+	}
+	for key, val := range params.TextFields {
+		if key == "prompt" {
+			continue // already handled above
+		}
+		_ = w.WriteField(key, val)
+	}
 
 	if err := w.Close(); err != nil {
 		return nil, nil, fmt.Errorf("closing multipart writer: %w", err)
