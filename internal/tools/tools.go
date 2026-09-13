@@ -122,7 +122,7 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 		mcp.WithArray("prompts",
 			mcp.Required(),
 			mcp.Description("Array of text prompts"),
-			mcp.Items(mcp.WithStringItems()),
+			mcp.WithStringItems(),
 		),
 		mcp.WithString("negative_prompt",
 			mcp.Description("What to avoid in all generated images"),
