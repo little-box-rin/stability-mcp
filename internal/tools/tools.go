@@ -185,7 +185,7 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 		}
 
 		// Create batch engine for this call
-		eng := batch.NewEngine(concurrency, cli, cfg.RateLimit)
+		eng := batch.NewEngine(concurrency, cli, cfg.RateLimit, time.Duration(cfg.RatePeriod)*time.Second)
 		defer eng.Stop()
 
 		batchID := ow.NextBatchID()

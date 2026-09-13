@@ -17,12 +17,15 @@ type Engine struct {
 }
 
 // NewEngine creates a new batch engine with the given concurrency, HTTP client,
-// and rate limit (requests per 10 seconds).
-func NewEngine(concurrency int, cli *client.Client, rateLimit int) *Engine {
+// and rate limit (requests per rate period).
+func NewEngine(concurrency int, cli *client.Client, rateLimit int, ratePeriod time.Duration) *Engine {
+	if ratePeriod <= 0 {
+		ratePeriod = 10 * time.Second
+	}
 	return &Engine{
 		concurrency: concurrency,
 		client:      cli,
-		rateLimiter: NewRateLimiter(rateLimit, 10*time.Second),
+		rateLimiter: NewRateLimiter(rateLimit, ratePeriod),
 	}
 }
 

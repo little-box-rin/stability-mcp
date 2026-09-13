@@ -49,17 +49,71 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	apiKey     string
+	// RetryConfig controls retry behavior for transient failures.
+	// Defaults to DefaultRetryConfig (3 retries, 500ms base, 30s cap).
+	RetryConfig RetryConfig
 }
 
 // NewClient creates a new Stability AI API client.
 func NewClient(apiKey string) *Client {
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 60 * time.Second,
 		},
-		baseURL: "https://api.stability.ai",
-		apiKey:  apiKey,
+		baseURL:     "https://api.stability.ai",
+		apiKey:      apiKey,
+		RetryConfig: DefaultRetryConfig(),
 	}
+}
+
+// doRequest performs an HTTP request with retry and exponential backoff.
+// Retries on connection errors, HTTP 429, and HTTP 5xx responses.
+// Supports body refresh via req.GetBody for multipart retries.
+func (c *Client) doRequest(req *http.Request) (*http.Response, error) {
+	var lastErr error
+	attempts := c.RetryConfig.MaxRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		resp, err := c.httpClient.Do(req)
+
+		// Success or non-retryable response: return immediately.
+		if err == nil && !shouldRetry(err, resp) {
+			return resp, nil
+		}
+
+		// Drain and close the body so the connection can be reused.
+		if resp != nil && resp.Body != nil {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 256))
+			_ = resp.Body.Close()
+		}
+
+		if err != nil {
+			lastErr = err
+		}
+
+		if attempt <= c.RetryConfig.MaxRetries {
+			// Refresh the request body for the next attempt.
+			if req.GetBody != nil {
+				if newBody, err := req.GetBody(); err == nil {
+					req.Body = newBody
+				} else if lastErr == nil {
+					lastErr = err
+				}
+			}
+			time.Sleep(backoff(attempt, c.RetryConfig))
+			continue
+		}
+
+		// All retries exhausted.
+		if err != nil {
+			return nil, lastErr
+		}
+		return resp, nil
+	}
+	return nil, lastErr
 }
 
 // Generate sends a single image generation request and returns the image bytes
@@ -129,8 +183,11 @@ func (c *Client) Generate(params GenerateParams) ([]byte, *GenerateResult, error
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Accept", "image/*")
 	req.Header.Set("User-Agent", "stability-mcp/1.0")
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(buf.Bytes())), nil
+	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sending request: %w", err)
 	}
@@ -209,8 +266,11 @@ func (c *Client) GenerateEdit(params GenerateEditParams) ([]byte, *GenerateResul
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Accept", "image/*")
 	req.Header.Set("User-Agent", "stability-mcp/1.0")
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(buf.Bytes())), nil
+	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sending request: %w", err)
 	}
