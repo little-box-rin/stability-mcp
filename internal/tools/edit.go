@@ -93,7 +93,9 @@ func runEditTool(ctx context.Context, cli *client.Client, ow *output.Writer, mod
 		finishReason = genResult.FinishReason
 	}
 
-	filename := output.SingleImageFilename(seed)
+	hash := output.EditImageHash(model, params.Prompt, params.TextFields)
+	singleDir := ow.BaseDir + "/single"
+	filename := output.SingleImageFilename(seed, hash, singleDir)
 	filePath, err := ow.WriteSingleImage(filename, imgData)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to save image: %v", err)), nil

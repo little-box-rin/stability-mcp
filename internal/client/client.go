@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -124,7 +125,13 @@ func (c *Client) Generate(params GenerateParams) ([]byte, *GenerateResult, error
 		model = "core"
 	}
 
-	url := fmt.Sprintf("%s/v2beta/stable-image/generate/%s", c.baseURL, model)
+	// SD3.5 models use the /sd3 endpoint with a model form field
+	endpoint := model
+	if strings.HasPrefix(model, "sd3") {
+		endpoint = "sd3"
+	}
+
+	url := fmt.Sprintf("%s/v2beta/stable-image/generate/%s", c.baseURL, endpoint)
 
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -132,6 +139,11 @@ func (c *Client) Generate(params GenerateParams) ([]byte, *GenerateResult, error
 	// Required field
 	if err := w.WriteField("prompt", params.Prompt); err != nil {
 		return nil, nil, fmt.Errorf("writing prompt field: %w", err)
+	}
+
+	// For SD3/SD3.5 models, send the specific variant as a form field
+	if strings.HasPrefix(model, "sd3") {
+		_ = w.WriteField("model", model)
 	}
 
 	// Optional fields

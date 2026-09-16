@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -96,7 +97,13 @@ func RegisterAll(s *server.MCPServer, cfg *config.Config, cli *client.Client) er
 			seed = params.Seed
 		}
 
-		filename := output.SingleImageFilename(seed)
+		singleDir := filepath.Join(ow.BaseDir, "single")
+		hash := output.ImageHash(
+			params.Prompt, params.NegativePrompt, params.StylePreset,
+			params.CfgScale, params.Steps, params.AspectRatio,
+			params.Model, params.OutputFormat, seed,
+		)
+		filename := output.SingleImageFilename(seed, hash, singleDir)
 		filePath, err := ow.WriteSingleImage(filename, data)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to save image: %v", err)), nil
@@ -305,7 +312,7 @@ func parseGenerateParams(request mcp.CallToolRequest) client.GenerateParams {
 		Seed:           mcp.ParseInt(request, "seed", 0),
 		StylePreset:    mcp.ParseString(request, "style_preset", ""),
 		OutputFormat:   mcp.ParseString(request, "output_format", "png"),
-		Model:          mcp.ParseString(request, "model", "core"),
+		Model:          mcp.ParseString(request, "model", "sd35"),
 	}
 }
 
